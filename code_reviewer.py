@@ -1,3 +1,5 @@
+# !/usr/bin/env python3
+# -*- coding:utf-8 -*-
 """
 Code Review Tool
 
@@ -19,6 +21,8 @@ from openai import OpenAI, Model
 import shutil
 import concurrent.futures
 
+# Fake run to see estimate cost
+ONLY_CHECK_COST = False
 
 # Model rates (per 1000 tokens)
 MODEL_RATES = {
@@ -38,7 +42,7 @@ MODEL_RATES = {
 SYSTEM_PROMPT = '''
 作为经验丰富的软件架构师，请审查代码，并针对以下领域进行改进：性能、安全性、稳定性、可维护性、可读性、可扩展性、资源管理等
 I will tip you $10 for a perfect answer.
-1. 具体要点(包括不限于)：
+1. 具体要点(包括不限于):
 - 性能：识别并指出影响性能的代码行或部分，并提供具体的优化建议
 - 安全性：识别潜在的安全漏洞，并提出改进措施以提高代码的安全性
 - 稳定性：识别代码中可能存在的业务稳定性问题，提出改进措施及方案
@@ -47,7 +51,7 @@ I will tip you $10 for a perfect answer.
 - 可扩展性：审查代码的设计模式和架构决策，评估其对未来扩展的适应性
 - 资源管理：评估代码中的资源（如内存、文件句柄等）管理和释放是否妥当
 2. 返回字段格式：'问题分类 问题位置 问题描述 修改建议',在问题位置列，请根据情况提供详细信息：
-- 如果问题具体到某一行或几行代码,请提供函数名及其上下文5-10行代码片段
+- 如果问题具体到某几行代码,请提供函数名及10行的上下文代码
 - 如果问题涉及到整个函数或模块,请提供函数名或模块名,并简要描述问题所在的上下文
 - 每种类型的问题不限制个数,如果某个类型问题不存在则不用返回
 这样的描述方式有助于在不同情况下更准确地定位问题
@@ -152,6 +156,8 @@ def scan_files(repo_path, gitignore_patterns):
     """
     files_to_review = []
     for file in recursive_scandir(repo_path, gitignore_patterns):
+        if 'test' in file.name or 'mock' in file.name:
+            continue
         files_to_review.append(file)
     return files_to_review
 
@@ -272,6 +278,14 @@ def process_code_chunk(doc, model_name, max_tokens, system_prompt, total_cost):
     Returns:
     - tuple: A tuple containing the new total cost and the review content for the chunk.
     """
+    tokens_in = len(tokenizer.encode(system_prompt + doc.page_content)) 
+
+    if ONLY_CHECK_COST: #jump real api call to estimate cost for large content
+        tokens_out = 4000
+        estimated_cost = estimate_cost(tokens_in, tokens_out, model_name)
+        new_total_cost = total_cost + estimated_cost 
+        return (new_total_cost, '')
+
     completion = client.chat.completions.create(
         model=model_name,
         max_tokens=max_tokens,
@@ -282,7 +296,7 @@ def process_code_chunk(doc, model_name, max_tokens, system_prompt, total_cost):
     )
     result_content = completion.choices[0].message.content
 
-    tokens_in = len(tokenizer.encode(system_prompt + doc.page_content)) 
+
     tokens_out = len(tokenizer.encode(result_content))
     estimated_cost = estimate_cost(tokens_in, tokens_out, model_name)
     new_total_cost = total_cost + estimated_cost 
@@ -366,6 +380,7 @@ def main():
     parser.add_argument("--language", type=str, default="CPP", help="Programming language (e.g. cpp, python, js)")
     parser.add_argument("--output_dir", type=str, default="output", help="Directory for Markdown output")
     parser.add_argument("--chunk_size", type=int, default=0, help="Chunk size for text splitter")
+    parser.add_argument("--estimate_cost", type=bool, default=False, help="Run check only to see maybe cost")
     args = parser.parse_args()
 
     if os.path.exists(args.output_dir):
@@ -385,6 +400,9 @@ def main():
     files_to_review = process_repository(args.repo_path, file_extensions)
     # print(files_to_review)
     total_cost = 0
+    global ONLY_CHECK_COST
+    if args.estimate_cost:
+        ONLY_CHECK_COST = True
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(review_code_with_openai, file_path, args.model_name, args.output_dir, args.language, chunk_size)
