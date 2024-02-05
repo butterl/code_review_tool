@@ -11,6 +11,7 @@ Version: 1.0
 License: [GPLv3]
 """
 import os
+import sys
 import argparse
 import logging
 from pathlib import Path
@@ -50,7 +51,7 @@ I will tip you $10 for a perfect answer.
 - 可读性：评估代码的清晰度和可读性，包括命名约定和注释的质量
 - 可扩展性：审查代码的设计模式和架构决策，评估其对未来扩展的适应性
 - 资源管理：评估代码中的资源（如内存、文件句柄等）管理和释放是否妥当
-2. 返回字段格式：'问题分类 问题位置 问题描述 修改建议',在问题位置列，请根据情况提供详细信息：
+2. 返回字段格式：'问题分类 问题位置 问题描述 修改建议',请提供精准的修改信息：
 - 如果问题具体到某几行代码,请提供函数名及10行的上下文代码
 - 如果问题涉及到整个函数或模块,请提供函数名或模块名,并简要描述问题所在的上下文
 - 每种类型的问题不限制个数,如果某个类型问题不存在则不用返回
@@ -83,7 +84,7 @@ def get_api_key():
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         logging.error("OPENAI_API_KEY environment variable not set.")
-        exit(1)
+        sys.exit()
     return api_key
 
 
@@ -131,7 +132,7 @@ def recursive_scandir(path, gitignore_patterns):
     Returns:
     - generator: Yields Path objects for files that don't match the ignore patterns and aren't in ignored directories.
     """
-    ignore_dirs = {'.git', 'fuzztest', 'unittest', 'third_party'}
+    ignore_dirs = {'.git', 'fuzztest', 'unittest', 'tests', 'test', 'third_party'}
     for entry in os.scandir(path):
         if entry.is_dir():
             if entry.name in ignore_dirs:
@@ -200,7 +201,7 @@ def process_repository(repo_path, file_extensions):
     gitignore_patterns = []  # Initialize gitignore_patterns as an empty list
     gitignore_path = os.path.join(repo_path, '.gitignore')
     if os.path.exists(gitignore_path):
-        with open(gitignore_path, 'r') as gitignore_file:
+        with open(gitignore_path, 'r', encoding='utf-8') as gitignore_file:
             gitignore_patterns.extend(line.strip() for line in gitignore_file if line.strip() and not line.startswith('#'))
 
     files_to_review = scan_files(repo_path, gitignore_patterns)
@@ -221,9 +222,9 @@ def get_chunk_size(model_name):
     - int: The chunk size associated with the model or a default value if the model is not found.
     """
     data = MODEL_RATES.get(model_name, {"input": 0, "output": 0, "chunk_size": 4000})
-    # print(data)
     if data:
         return data["chunk_size"]
+    return 4000
 
 
 def estimate_cost(tokens_in, token_out, model_name):
@@ -278,7 +279,7 @@ def process_code_chunk(doc, model_name, max_tokens, system_prompt, total_cost):
     Returns:
     - tuple: A tuple containing the new total cost and the review content for the chunk.
     """
-    tokens_in = len(tokenizer.encode(system_prompt + doc.page_content)) 
+    tokens_in = len(tokenizer.encode(system_prompt + doc.page_content))
 
     if ONLY_CHECK_COST: #jump real api call to estimate cost for large content
         tokens_out = 8000
@@ -299,9 +300,9 @@ def process_code_chunk(doc, model_name, max_tokens, system_prompt, total_cost):
 
 
     tokens_out = len(tokenizer.encode(result_content))
-  
+
     estimated_cost = estimate_cost(tokens_in, tokens_out, model_name)
-    new_total_cost = total_cost + estimated_cost 
+    new_total_cost = total_cost + estimated_cost
     logging.info(f"tokens_in: {tokens_in}, len_string:{len(system_prompt + doc.page_content)}; tokens_out:{tokens_out},len_string:{len(result_content)}")
     return (new_total_cost, result_content)  # Indicate continuation.
 
@@ -323,7 +324,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
     - float: The updated total cost after processing this file.
     """
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         cleaned_content = remove_license_header(content, ["*/", "#", "//"])
     except Exception as e:
@@ -339,7 +340,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
     collected_reviews = []
     total_cost = 0
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         future_to_doc = {executor.submit(process_code_chunk, doc, model_name, max_tokens, system_prompt, total_cost): doc for doc in docs}
         for future in concurrent.futures.as_completed(future_to_doc):
             doc = future_to_doc[future]
@@ -359,12 +360,11 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
         for review_content in collected_reviews:
             if first_block:
                 content_to_write = review_content
-                 # After the first write, all subsequent writes should be append operations possibly without headers
+                # After the first write, all subsequent writes should be append without headers
                 first_block = False
             else:
                 # If not first block, remove the first three lines (headers) of the review_content
                 content_to_write = review_content.split('\n', 3)[-1]
-                #content_to_write = '\n'.join(review_content.split('\n')[3:])
             md_file.write(content_to_write)
 
     logging.info(f"Review written to {output_path}")
@@ -400,7 +400,7 @@ def main():
     chunk_size = args.chunk_size
     if args.chunk_size == 0:
         chunk_size = get_chunk_size(args.model_name)
-       
+
     files_to_review = process_repository(args.repo_path, file_extensions)
 
     total_cost = 0
@@ -408,23 +408,13 @@ def main():
     if args.estimate_cost:
         ONLY_CHECK_COST = True
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(review_code_with_openai, file_path, args.model_name, args.output_dir, args.language, chunk_size)
                    for file_path in files_to_review]
         for future in concurrent.futures.as_completed(futures):
             total_cost += future.result()
             logging.info(f"Current cost: ${total_cost:.4f}")
-    '''
-    for file_path in files_to_review:
-        total_cost = review_code_with_openai_multi(
-            file_path=file_path,
-            model_name=args.model_name,
-            output_dir=args.output_dir,
-            language=args.language,
-            total_cost=total_cost,
-            chunk_size=chunk_size
-        )
-    '''
+
     logging.info(f"Review process completed. Total cost: ${total_cost:.4f}.")
 
 if __name__ == "__main__":
