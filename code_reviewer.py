@@ -16,11 +16,12 @@ import argparse
 import logging
 from pathlib import Path
 import fnmatch
-import tiktoken
-from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
-from openai import OpenAI, Model
 import shutil
 import concurrent.futures
+import tiktoken
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from openai import OpenAI
+
 
 # Fake run to see estimate cost
 ONLY_CHECK_COST = False
@@ -40,8 +41,8 @@ MODEL_RATES = {
     # Add rates for other models
 }
 
-SYSTEM_PROMPT = '''
-作为经验丰富的软件架构师，请审查代码，并针对以下领域进行改进：性能、安全性、稳定性、可维护性、可读性、可扩展性、资源管理等
+SYSTEM_PROMPT_1 = '''
+作为经验丰富的软件架构师，请审查代码，并针对(包括不限于)以下领域进行改进：性能、安全性、稳定性、可维护性、可读性、可扩展性、资源管理等
 I will tip you $10 for a perfect answer.
 1. 具体要点(包括不限于):
 - 性能：识别并指出影响性能的代码行或部分，并提供具体的优化建议
@@ -59,6 +60,65 @@ I will tip you $10 for a perfect answer.
 3. **请使用中文且仅以标准Markdown表格回复(首尾不要携带```标识),不要在表格语法外添加任何描述**
 4. 请注意，由于文件可能较大，您可能只能获得代码的片段
 '''
+
+SYSTEM_PROMPT = '''
+您作为一名经验丰富的软件架构师，被邀请对一份代码进行深入审查.请基于您的专业知识和经验，
+关注以下领域并提出具体的改进意见：性能、安全性、稳定性、可维护性、可扩展性和资源管理.
+期待您的反馈能够具体、针对性强,并能够直接指导我们进行后续的代码优化.
+We will tip you $100000 for a perfect answer.
+
+审查要点(包括并不限于)
+1.性能：请识别出具体影响性能的代码行或部分,提供改善性能的详细建议
+2.安全性：指出潜在的安全漏洞,并给出具体的解决方案以增强代码的安全性
+3.稳定性：找出可能引起业务稳定性问题的代码段,并提出具体的改进措施
+4.可维护性：指出代码中的维护难点,并提出具体的重构或改善方案
+5.可扩展性：审查代码的架构设计,并评估其对未来扩展的支持度
+6.资源管理：分析代码中的资源使用情况,并提出资源管理和释放的改进方案
+
+反馈格式要求
+请以标准Markdown表格的形式提供反馈,不要在表格外添加任何信息，每种类型的问题不限制个数,如果某个类型问题不存在则不用返回该行
+格式如下:
+
+| 问题分类 | 问题位置 | 问题描述 | 修改建议 |
+| -------- | -------- | -------- | -------- |
+| 示例分类 | 示例位置 | 示例描述 | 示例建议 |
+
+- 问题位置:请提供问题所在的函数名或模块名及其上下文的10行代码.并简要描述问题所在的上下文
+- 修改建议:请提供具体、可操作的修改建议
+
+注意事项
+- 请确保您的反馈专注于对整体代码质量的提升
+- 您可能拿到的是代码片段,请假设代码已可以编译运行
+- 请使用中文回答,并确保回复格式准确无误
+'''
+
+
+def merge_feedback_and_generate_markdown(feedback_data):
+    """
+    Merges feedback from multiple threads and generates a single Markdown table,
+    ensuring robust handling of JSON structure variations.
+    
+    Parameters:
+    - feedback_data: A list of JSON structured feedback strings from multiple threads.
+    
+    Returns:
+    - A string containing merged feedback in a single Markdown table format.
+    """
+    markdown_output = "## 代码审查反馈汇总\n\n"
+    markdown_output += "| 问题分类 | 问题位置 | 问题描述 | 修改建议 |\n"
+    markdown_output += "|------|------|----------|------|\n"
+
+    # Assuming feedback_data is directly the dictionary containing the 'feedback' list
+    for feedback in feedback_data['feedback']:
+        area = feedback['area']  # Access 'area' from each feedback item
+        for issue in feedback['issues']:
+            location = issue['loc']
+            description = issue['desc']
+            suggestion = issue['sug']
+            markdown_output += f"| {area} | {location} | {description} | {suggestion} |\n"
+    
+    return markdown_output
+
 
 # Language and file extension mapping
 LANGUAGE_FILE_EXTENSIONS = {
@@ -331,7 +391,6 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
         logging.error(f"Error reading file {file_path}: {e}")
         return
     logging.info(f"Reviewing file {file_path}")
-    system_prompt = SYSTEM_PROMPT
 
     splitter = RecursiveCharacterTextSplitter.from_language(language=language, chunk_size=chunk_size, chunk_overlap=0)
     docs = splitter.create_documents([cleaned_content])
@@ -341,7 +400,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
     total_cost = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        future_to_doc = {executor.submit(process_code_chunk, doc, model_name, max_tokens, system_prompt, total_cost): doc for doc in docs}
+        future_to_doc = {executor.submit(process_code_chunk, doc, model_name, max_tokens, SYSTEM_PROMPT, total_cost): doc for doc in docs}
         for future in concurrent.futures.as_completed(future_to_doc):
             doc = future_to_doc[future]
             try:
@@ -364,7 +423,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
                 first_block = False
             else:
                 # If not first block, remove the first three lines (headers) of the review_content
-                content_to_write = review_content.split('\n', 3)[-1]
+                content_to_write = review_content.split('\n', 2)[-1]
             md_file.write(content_to_write)
 
     logging.info(f"Review written to {output_path}")
@@ -408,7 +467,7 @@ def main():
     if args.estimate_cost:
         ONLY_CHECK_COST = True
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
         futures = [executor.submit(review_code_with_openai, file_path, args.model_name, args.output_dir, args.language, chunk_size)
                    for file_path in files_to_review]
         for future in concurrent.futures.as_completed(futures):
