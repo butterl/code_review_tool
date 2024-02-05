@@ -281,9 +281,10 @@ def process_code_chunk(doc, model_name, max_tokens, system_prompt, total_cost):
     tokens_in = len(tokenizer.encode(system_prompt + doc.page_content)) 
 
     if ONLY_CHECK_COST: #jump real api call to estimate cost for large content
-        tokens_out = 4000
+        tokens_out = 8000
         estimated_cost = estimate_cost(tokens_in, tokens_out, model_name)
-        new_total_cost = total_cost + estimated_cost 
+        new_total_cost = total_cost + estimated_cost
+        logging.info(f"tokens_in: {tokens_in}, len_string:{len(system_prompt + doc.page_content)}")
         return (new_total_cost, '')
 
     completion = client.chat.completions.create(
@@ -298,13 +299,14 @@ def process_code_chunk(doc, model_name, max_tokens, system_prompt, total_cost):
 
 
     tokens_out = len(tokenizer.encode(result_content))
+  
     estimated_cost = estimate_cost(tokens_in, tokens_out, model_name)
     new_total_cost = total_cost + estimated_cost 
-
+    logging.info(f"tokens_in: {tokens_in}, len_string:{len(system_prompt + doc.page_content)}; tokens_out:{tokens_out},len_string:{len(result_content)}")
     return (new_total_cost, result_content)  # Indicate continuation.
 
 
-def review_code_with_openai(file_path, model_name, output_dir, language, max_tokens=2000, total_cost=0, chunk_size=4000):
+def review_code_with_openai(file_path, model_name, output_dir, language, chunk_size, max_tokens=2000, total_cost=0):
     """
     Reviews code in a given file using OpenAI, writing the review to a Markdown file.
 
@@ -329,6 +331,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, max_tok
         return
     logging.info(f"Reviewing file {file_path}")
     system_prompt = SYSTEM_PROMPT
+
     splitter = RecursiveCharacterTextSplitter.from_language(language=language, chunk_size=chunk_size, chunk_overlap=0)
     docs = splitter.create_documents([cleaned_content])
     output_path = Path(output_dir) / f"{Path(file_path).stem}_review.md"
@@ -336,7 +339,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, max_tok
     collected_reviews = []
     total_cost = 0
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         future_to_doc = {executor.submit(process_code_chunk, doc, model_name, max_tokens, system_prompt, total_cost): doc for doc in docs}
         for future in concurrent.futures.as_completed(future_to_doc):
             doc = future_to_doc[future]
@@ -394,17 +397,18 @@ def main():
         logging.error(f"Unsupported language: {args.language}. Supported languages are: {', '.join(LANGUAGE_FILE_EXTENSIONS.keys())}")
         return
 
+    chunk_size = args.chunk_size
     if args.chunk_size == 0:
         chunk_size = get_chunk_size(args.model_name)
-
+       
     files_to_review = process_repository(args.repo_path, file_extensions)
-    # print(files_to_review)
+
     total_cost = 0
     global ONLY_CHECK_COST
     if args.estimate_cost:
         ONLY_CHECK_COST = True
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = [executor.submit(review_code_with_openai, file_path, args.model_name, args.output_dir, args.language, chunk_size)
                    for file_path in files_to_review]
         for future in concurrent.futures.as_completed(futures):
