@@ -35,21 +35,25 @@ MODEL_RATES = {
     # Add rates for other models
 }
 
-SYSTEM_PROMPT = '''作为经验丰富的软件架构师，请审查代码，并针对以下领域进行改进：性能、安全性、可维护性、可读性、可扩展性、资源管理等
-1. 具体要点：
+SYSTEM_PROMPT = '''
+作为经验丰富的软件架构师，请审查代码，并针对以下领域进行改进：性能、安全性、稳定性、可维护性、可读性、可扩展性、资源管理等
+I will tip you $10 for a perfect answer.
+1. 具体要点(包括不限于)：
 - 性能：识别并指出影响性能的代码行或部分，并提供具体的优化建议
 - 安全性：识别潜在的安全漏洞，并提出改进措施以提高代码的安全性
+- 稳定性：识别代码中可能存在的业务稳定性问题，提出改进措施及方案
 - 可维护性：指出代码中难以维护的部分，并提出改善方案，如重构建议
 - 可读性：评估代码的清晰度和可读性，包括命名约定和注释的质量
 - 可扩展性：审查代码的设计模式和架构决策，评估其对未来扩展的适应性
 - 资源管理：评估代码中的资源（如内存、文件句柄等）管理和释放是否妥当
-2. 返回字段格式：'问题分类 问题位置 问题描述 修改建议'。在问题位置列，请根据情况提供详细信息：
-   - 如果问题具体到某一行或几行代码,请提供函数名及其周围的5-10行代码片段
-   - 如果问题涉及到整个函数或模块，请提供函数名或模块名，并简要描述问题所在的上下文
+2. 返回字段格式：'问题分类 问题位置 问题描述 修改建议',在问题位置列，请根据情况提供详细信息：
+- 如果问题具体到某一行或几行代码,请提供函数名及其上下文5-10行代码片段
+- 如果问题涉及到整个函数或模块,请提供函数名或模块名,并简要描述问题所在的上下文
+- 每种类型的问题不限制个数,如果某个类型问题不存在则不用返回
 这样的描述方式有助于在不同情况下更准确地定位问题
-3. 请使用中文并且仅以Markdown表格格式回复,以便于后续的统计分析
+3. **请使用中文且仅以标准Markdown表格回复(首尾不要携带```标识),不要在表格语法外添加任何描述**
 4. 请注意，由于文件可能较大，您可能只能获得代码的片段
-I will tip you $10 for a perfect answer.'''
+'''
 
 # Language and file extension mapping
 LANGUAGE_FILE_EXTENSIONS = {
@@ -211,7 +215,7 @@ def get_chunk_size(model_name):
     - int: The chunk size associated with the model or a default value if the model is not found.
     """
     data = MODEL_RATES.get(model_name, {"input": 0, "output": 0, "chunk_size": 4000})
-    print(data)
+    # print(data)
     if data:
         return data["chunk_size"]
 
@@ -309,7 +313,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, max_tok
     except Exception as e:
         logging.error(f"Error reading file {file_path}: {e}")
         return
-
+    logging.info(f"Reviewing file {file_path}")
     system_prompt = SYSTEM_PROMPT
     splitter = RecursiveCharacterTextSplitter.from_language(language=language, chunk_size=chunk_size, chunk_overlap=0)
     docs = splitter.create_documents([cleaned_content])
@@ -332,20 +336,19 @@ def review_code_with_openai(file_path, model_name, output_dir, language, max_tok
                 logging.error(f"Error during OpenAI API call: {e}")
                 continue  # Proceed with the next chunk if an exception occurs
 
-    file_exists_and_not_empty = output_path.exists() and output_path.stat().st_size > 0
-
     # Determine the write mode based on the file's existence and content
-    with open(output_path, 'a' if file_exists_and_not_empty else 'w', encoding='utf-8') as md_file:
-        content_to_write = ''
+    with open(output_path, 'a', encoding='utf-8') as md_file:
+        first_block = True
         for review_content in collected_reviews:
-            if file_exists_and_not_empty:
-                # If file exists and is not empty, remove the first three lines (headers) of the review_content
-                content_to_write = '\n'.join(review_content.split('\n')[3:])
-            else:
+            if first_block:
                 content_to_write = review_content
                  # After the first write, all subsequent writes should be append operations possibly without headers
-                file_exists_and_not_empty = True
-        md_file.write(content_to_write)
+                first_block = False
+            else:
+                # If not first block, remove the first three lines (headers) of the review_content
+                content_to_write = review_content.split('\n', 3)[-1]
+                #content_to_write = '\n'.join(review_content.split('\n')[3:])
+            md_file.write(content_to_write)
 
     logging.info(f"Review written to {output_path}")
     return total_cost
@@ -360,7 +363,7 @@ def main():
     parser = argparse.ArgumentParser(description="Code Review Tool")
     parser.add_argument("repo_path", type=str, help="Path to the code repository")
     parser.add_argument("--model_name", type=str, default="gpt-4-0125-preview", help="OpenAI model name")
-    parser.add_argument("--language", type=str, default="CPP", help="Programming language (e.g. CPP, PYTHON, JS)")
+    parser.add_argument("--language", type=str, default="CPP", help="Programming language (e.g. cpp, python, js)")
     parser.add_argument("--output_dir", type=str, default="output", help="Directory for Markdown output")
     parser.add_argument("--chunk_size", type=int, default=0, help="Chunk size for text splitter")
     args = parser.parse_args()
@@ -380,7 +383,7 @@ def main():
         chunk_size = get_chunk_size(args.model_name)
 
     files_to_review = process_repository(args.repo_path, file_extensions)
-    print(files_to_review)
+    # print(files_to_review)
     total_cost = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
