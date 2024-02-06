@@ -34,7 +34,7 @@ MODEL_RATES = {
     "gpt-4-turbo-preview": {"input": 0.01, "output": 0.03, "chunk_size":8000},
     "gpt-4": {"input": 0.03, "output": 0.06, "chunk_size":8000},
     "gpt-4-32k": {"input": 0.06, "output": 0.12, "chunk_size":32000},
-    "gpt-3.5-turbo-0125": {"input": 0.0010, "output": 0.0020, "chunk_size":4000},
+    "gpt-3.5-turbo-0125": {"input": 0.0005, "output": 0.0010, "chunk_size":4000},
     "gpt-3.5-turbo-1106": {"input": 0.0010, "output": 0.0020, "chunk_size":4000},
     "gpt-3.5-turbo": {"input": 0.0010, "output": 0.0020, "chunk_size":4000},
     "gpt-3.5-16K": {"input": 0.0030, "output": 0.0060, "chunk_size":4000},
@@ -61,7 +61,7 @@ I will tip you $10 for a perfect answer.
 4. 请注意，由于文件可能较大，您可能只能获得代码的片段
 '''
 
-SYSTEM_PROMPT = '''
+SYSTEM_PROMPT_2 = '''
 您作为一名经验丰富的软件架构师，被邀请对一份代码进行深入审查.请基于您的专业知识和经验，
 关注以下领域并提出具体的改进意见：性能、安全性、稳定性、可维护性、可扩展性和资源管理.
 期待您的反馈能够具体、针对性强,并能够直接指导我们进行后续的代码优化.
@@ -76,12 +76,13 @@ We will tip you $100000 for a perfect answer.
 6.资源管理：分析代码中的资源使用情况,并提出资源管理和释放的改进方案
 
 反馈格式要求
-请以标准Markdown表格的形式提供反馈,不要在表格外添加任何信息，每种类型的问题不限制个数,如果某个类型问题不存在则不用返回该行
+- 请以标准Markdown表格的形式提供反馈,不要在表格外添加任何信息
+- 每种类型的问题不限制个数,如果某个类型问题不存在则不用返回该行
 格式如下:
 
-| 问题分类 | 问题位置 | 问题描述 | 修改建议 |
+| 问题分类 | 问题位置 | 问题描述 | 修改示例 |
 | -------- | -------- | -------- | -------- |
-| 示例分类 | 示例位置 | 示例描述 | 示例建议 |
+| 示例分类 | 示例位置 | 示例描述 | 示例修改及建议 |
 
 - 问题位置:请提供问题所在的函数名或模块名及其上下文的10行代码.并简要描述问题所在的上下文
 - 修改建议:请提供具体、可操作的修改建议
@@ -92,6 +93,35 @@ We will tip you $100000 for a perfect answer.
 - 请使用中文回答,并确保回复格式准确无误
 '''
 
+SYSTEM_PROMPT = '''
+您作为一名经验丰富的软件架构师，被邀请对一份代码进行深入审查.请基于您的专业知识和经验，
+关注以下领域并提出具体的改进意见：性能、安全性、稳定性.
+期待您的反馈能具体、针对性强、可直接指导后续的代码优化(比如给出优化后代码).
+We will tip you $100000 for a perfect answer.
+
+审查要点
+1.性能：请识别出具体影响性能的代码行或部分,提供改善性能的详细建议
+2.安全性：指出潜在的安全漏洞,并给出具体的解决方案以增强代码的安全性
+3.稳定性：找出可能引起业务稳定性问题的代码段,并提出具体的改进措施
+
+反馈格式要求
+- 请以标准Markdown形式提供反馈
+- 每种类型的问题不限制个数,如果某个类型问题不存在则不用返回该行
+- 每个类型的问题最后添加markdown 分割符(---)以及换行符(\n)
+格式如下:
+\n### 问题分类:(性能/安全/稳定 etc.)
+### 问题位置:
+(提供问题所在的函数名或模块名及其上下文的5-10行代码.并简要描述问题所在的上下文)
+### 问题描述:
+(指明问题原因和影响范围和修改思路)
+### 修改示例:
+(请提供基于修改思路具体、可操作的修改建议及关键修改点示例)
+
+注意事项
+- 请确保您的反馈专注与审查要点，对整体代码质量的提升
+- 您可能拿到的是代码片段,请假设代码已可以编译运行
+- 请使用中文回答,并确保回复格式准确无误
+'''
 
 def merge_feedback_and_generate_markdown(feedback_data):
     """
@@ -116,13 +146,13 @@ def merge_feedback_and_generate_markdown(feedback_data):
             description = issue['desc']
             suggestion = issue['sug']
             markdown_output += f"| {area} | {location} | {description} | {suggestion} |\n"
-    
+
     return markdown_output
 
 
 # Language and file extension mapping
 LANGUAGE_FILE_EXTENSIONS = {
-    "CPP": ['.cpp', '.hpp', '.cc', '.cxx', '.hxx'],
+    "CPP": ['.cpp', '.hpp', '.cc', '.cxx', '.hxx', '.c', '.h'],
     "PYTHON": ['.py'],
     "JS": ['.js', '.ts', '.tsx']
     # Add mappings for other languages and extensions
@@ -342,7 +372,7 @@ def process_code_chunk(doc, model_name, max_tokens, system_prompt, total_cost):
     tokens_in = len(tokenizer.encode(system_prompt + doc.page_content))
 
     if ONLY_CHECK_COST: #jump real api call to estimate cost for large content
-        tokens_out = 8000
+        tokens_out = 1000
         estimated_cost = estimate_cost(tokens_in, tokens_out, model_name)
         new_total_cost = total_cost + estimated_cost
         logging.info(f"tokens_in: {tokens_in}, len_string:{len(system_prompt + doc.page_content)}")
@@ -394,7 +424,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
 
     splitter = RecursiveCharacterTextSplitter.from_language(language=language, chunk_size=chunk_size, chunk_overlap=0)
     docs = splitter.create_documents([cleaned_content])
-    output_path = Path(output_dir) / f"{Path(file_path).stem}_review.md"
+    output_path = Path(output_dir) / f"{Path(file_path)}_review.md"
 
     collected_reviews = []
     total_cost = 0
@@ -413,18 +443,9 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
                 logging.error(f"Error during OpenAI API call: {e}")
                 continue  # Proceed with the next chunk if an exception occurs
 
-    # Determine the write mode based on the file's existence and content
     with open(output_path, 'a', encoding='utf-8') as md_file:
-        first_block = True
         for review_content in collected_reviews:
-            if first_block:
-                content_to_write = review_content
-                # After the first write, all subsequent writes should be append without headers
-                first_block = False
-            else:
-                # If not first block, remove the first three lines (headers) of the review_content
-                content_to_write = review_content.split('\n', 2)[-1]
-            md_file.write(content_to_write)
+            md_file.write(review_content)
 
     logging.info(f"Review written to {output_path}")
     return total_cost
