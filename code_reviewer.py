@@ -22,7 +22,6 @@ import tiktoken
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from openai import OpenAI
 
-
 # Fake run to see estimate cost
 ONLY_CHECK_COST = False
 
@@ -70,33 +69,6 @@ We will tip you $10 for a perfect answer.
 - 您可能拿到的是代码片段,请假设代码已可以编译运行
 - 请使用中文回答,并确保回复格式准确无误
 '''
-
-def merge_feedback_and_generate_markdown(feedback_data):
-    """
-    Merges feedback from multiple threads and generates a single Markdown table,
-    ensuring robust handling of JSON structure variations.
-    
-    Parameters:
-    - feedback_data: A list of JSON structured feedback strings from multiple threads.
-    
-    Returns:
-    - A string containing merged feedback in a single Markdown table format.
-    """
-    markdown_output = "## 代码审查反馈汇总\n\n"
-    markdown_output += "| 问题分类 | 问题位置 | 问题描述 | 修改建议 |\n"
-    markdown_output += "|------|------|----------|------|\n"
-
-    # Assuming feedback_data is directly the dictionary containing the 'feedback' list
-    for feedback in feedback_data['feedback']:
-        area = feedback['area']  # Access 'area' from each feedback item
-        for issue in feedback['issues']:
-            location = issue['loc']
-            description = issue['desc']
-            suggestion = issue['sug']
-            markdown_output += f"| {area} | {location} | {description} | {suggestion} |\n"
-
-    return markdown_output
-
 
 # Language and file extension mapping
 LANGUAGE_FILE_EXTENSIONS = {
