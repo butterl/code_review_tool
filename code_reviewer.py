@@ -27,16 +27,16 @@ ONLY_CHECK_COST = False
 
 # Model rates (per 1000 tokens)
 MODEL_RATES = {
-    "gpt-4-0125-preview": {"input": 0.01, "output": 0.03, "chunk_size":8000},
-    "gpt-4-1106-preview": {"input": 0.01, "output": 0.03, "chunk_size":8000},
-    "gpt-4-1106-vision-preview": {"input": 0.01, "output": 0.03, "chunk_size":8000},
-    "gpt-4-turbo-preview": {"input": 0.01, "output": 0.03, "chunk_size":8000},
+    "gpt-4-0125-preview": {"input": 0.01, "output": 0.03, "chunk_size":20000},
+    "gpt-4-1106-preview": {"input": 0.01, "output": 0.03, "chunk_size":20000},
+    "gpt-4-1106-vision-preview": {"input": 0.01, "output": 0.03, "chunk_size":20000},
+    "gpt-4-turbo-preview": {"input": 0.01, "output": 0.03, "chunk_size":20000},
     "gpt-4": {"input": 0.03, "output": 0.06, "chunk_size":8000},
-    "gpt-4-32k": {"input": 0.06, "output": 0.12, "chunk_size":32000},
-    "gpt-3.5-turbo-0125": {"input": 0.0005, "output": 0.0010, "chunk_size":4000},
-    "gpt-3.5-turbo-1106": {"input": 0.0010, "output": 0.0020, "chunk_size":4000},
-    "gpt-3.5-turbo": {"input": 0.0010, "output": 0.0020, "chunk_size":4000},
-    "gpt-3.5-16K": {"input": 0.0030, "output": 0.0060, "chunk_size":4000},
+    "gpt-4-32k": {"input": 0.06, "output": 0.12, "chunk_size":60000},
+    "gpt-3.5-turbo-0125": {"input": 0.0005, "output": 0.0010, "chunk_size":12000},
+    "gpt-3.5-turbo-1106": {"input": 0.0010, "output": 0.0020, "chunk_size":12000},
+    "gpt-3.5-turbo": {"input": 0.0010, "output": 0.0020, "chunk_size":12000},
+    "gpt-3.5-16K": {"input": 0.0030, "output": 0.0060, "chunk_size":32000},
     # Add rates for other models
 }
 
@@ -54,15 +54,17 @@ We will tip you $10 for a perfect answer.
 反馈格式要求
 - 请以标准Markdown形式提供反馈
 - 每种类型的问题不限制个数,如果某个类型问题不存在则不用返回该行
-- 每个类型的问题最后添加markdown 分割符(---)以及换行符(\n)
+- 每个类型的问题最后添加markdown 分割符"---\n\n"
 格式如下:
-\n### 问题分类:(性能/安全/稳定 etc.)
+### 问题分类:(性能/安全/稳定 etc.)
 ### 问题位置:
-(提供问题所在的函数名或模块名及其上下文的5-10行代码.并简要描述问题所在的上下文)
+1.提供问题所在的函数名或模块名,方便初步定位
+2.提供提供问题上下文的5-10行代码,方便详细定位
 ### 问题描述:
-(指明问题原因和影响范围和修改思路)
+- 指明问题原因和影响范围和修改思路
 ### 修改示例:
-(请提供基于修改思路具体、可操作的修改建议及关键修改点示例)
+- 提供具体修改思路、可操作的修改建议
+- 提供关键修改点代码片段示例
 
 注意事项
 - 请确保您的反馈专注与审查要点，对整体代码质量的提升
@@ -115,7 +117,7 @@ def get_base_url():
     else:
         if not base_url.endswith("/"):
             base_url += "/"
-    base_url += "v1"
+    base_url = "".join([base_url, "v1"])
     return base_url
 
 
@@ -231,10 +233,10 @@ def get_chunk_size(model_name):
     Returns:
     - int: The chunk size associated with the model or a default value if the model is not found.
     """
-    data = MODEL_RATES.get(model_name, {"input": 0, "output": 0, "chunk_size": 4000})
+    data = MODEL_RATES.get(model_name, {"input": 0, "output": 0, "chunk_size": 10000})
     if data:
         return data["chunk_size"]
-    return 4000
+    return 10000
 
 
 def estimate_cost(tokens_in, token_out, model_name):
@@ -317,7 +319,7 @@ def process_code_chunk(doc, model_name, max_tokens, system_prompt, total_cost):
     return (new_total_cost, result_content)  # Indicate continuation.
 
 
-def review_code_with_openai(file_path, model_name, output_dir, language, chunk_size, max_tokens=2000, total_cost=0):
+def review_code_with_openai(file_path, model_name, output_dir, language, chunk_size, max_tokens=2000):
     """
     Reviews code in a given file using OpenAI, writing the review to a Markdown file.
 
@@ -344,7 +346,7 @@ def review_code_with_openai(file_path, model_name, output_dir, language, chunk_s
 
     splitter = RecursiveCharacterTextSplitter.from_language(language=language, chunk_size=chunk_size, chunk_overlap=0)
     docs = splitter.create_documents([cleaned_content])
-    output_path = Path(output_dir) / f"{Path(file_path)}_review.md"
+    output_path = Path(output_dir) / f"{Path(file_path).name}_review.md"
 
     collected_reviews = []
     total_cost = 0
